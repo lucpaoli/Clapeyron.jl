@@ -328,12 +328,8 @@ The keywords `phase` and `threaded` are passed to [`Clapeyron.volume`](@ref).
 function fugacity_coefficient(model::EoSModel, p, T, z=SA[1.0]; phase=:unknown, threaded=true)
     V = volume(model, p, T, z; phase, threaded)
     μ_res = VT_chemical_potential_res(model, V, T, z)
-    φ = μ_res
     Z = p * V / R̄ / T / sum(z)
-    for i ∈ @comps
-        φ[i] = exp(μ_res[i] / R̄ / T) / Z
-    end
-    return φ
+    return exp.(μ_res ./ R̄ ./ T) ./ Z
 end
 
 function activity_coefficient(model::EoSModel, p, T, z=SA[1.0]; phase=:unknown, threaded=true)
