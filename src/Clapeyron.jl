@@ -10,7 +10,6 @@ const PackedVofV = PackedVectorsOfVectors.PackedVectorOfVectors
 using FillArrays: FillArrays
 
 using Roots: Roots
-# import Optim # Having this added makes things easier but appears to break stuff :(
 using NLSolvers
 using NLSolvers: NEqOptions
 import BlackBoxOptim

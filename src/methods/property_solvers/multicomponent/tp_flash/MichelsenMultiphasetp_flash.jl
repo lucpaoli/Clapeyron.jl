@@ -1,6 +1,6 @@
 import NLsolve, Optim
 
-function Michelsen_multiphase_tp_flash(model, p, T, z; abstol=1e-8, outerSSiters=30, outerNewtoniters=30)
+function Michelsen_multiphase_tp_flash(model, p, T, z; abstol=1e-8, outerSSiters=15, outerNewtoniters=30)
     tm_min_vec, tm_xmin_vec = chemical_stability_analysis(model, p, T, z; converge_min=true, abstol=1e-3)
 
     if any(tm_min_vec .< 0.0)
@@ -95,7 +95,9 @@ function multiphase_flash_impl(model, p, T, z, x, β, abstol, outerSSiters, oute
         φ_p .= fugacity_coefficient(model, p, T, x[i, :])
     end
 
+    # This can be reduced to iterate using K-factors, however issues do arise if the selected reference phase disappears
     f!(F, x) = fixpoint_multiphase!(F, x, β, φmat, model, p, T, z)
+    # If unstable, reduce m parameter
     res = NLsolve.nlsolve(f!, x, method=:anderson, m=5, ftol=abstol, iterations=outerSSiters)
     if ~(res.x_converged || res.f_converged) # second order scheme
         # @info "SS did not converged in $outerSSiters successive substitution iterations, moving on to second order minimisation"

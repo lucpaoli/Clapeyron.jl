@@ -1,3 +1,4 @@
+# One of the main issues with this (I think) is that it's not actually a cubic. It's defined as a derivative of vdW but is actually quintic
 abstract type HSvdWModel <: vdWModel end
 
 struct HSvdWParam <: EoSParam
@@ -101,16 +102,6 @@ function HSvdW(components::Vector{String}; idealmodel=BasicIdeal,
     return model
 end
 
-function ab_premixing(model::Type{<:HSvdWModel}, mixing::MixingRule, Tc, pc, vc, kij)
-    _Tc = Tc.values
-    # _Vc = vc.values
-    _pc = pc.values
-    components = vc.components
-    a = epsilon_LorentzBerthelot(SingleParam("a", components, @. 0.359 * 1.38 * (R̄ * _Tc)^2 / _pc), kij)
-    b = sigma_LorentzBerthelot(SingleParam("b", components, @. 0.359 * 0.5216 * R̄ * _Tc / _pc))
-    return a, b
-end
-
 function ab_consts(::Type{<:HSvdWModel})
     Ωa = 0.359 * 1.38
     Ωb = 0.359 * 0.5216
@@ -128,9 +119,70 @@ function a_res(model::HSvdWModel, V, T, z, _data=data(model, V, T, z))
     η = b / 4v
     Z_hs = (1 + η + η^2 - η^3) / (1 - η)^3 # "hard shell" Z
 
-    # p = pressure(model, V, T, z)
     Z = (RT * v * (η^3 - η^2 - η - 1) + a * (η - 1)^3) / (RT * v * (η - 1)^3)
+    Z = Z_hs + a / (RT * v)
 
-    return log(Z_hs / Z) - a / (R̄ * T * v)
+    # This is in molar quantities, should be corrected for n moles?
+    return log(Z_hs / Z) - a * v / (RT)
 end
 
+
+function volume_impl(model::HSvdWModel, p, T, z=SA[1.0], phase=:unknown, threaded=true, vol0=nothing)
+    #Threaded version
+    TYPE = typeof(p + T + first(z))
+
+    if ~isnothing(vol0)
+        V0 = vol0
+        V = _volume_compress(model, p, T, z, V0)
+        return V
+    end
+
+    if phase != :unknown
+        V0 = x0_volume(model, p, T, z, phase=phase)
+        V = _volume_compress(model, p, T, z, V0)
+        #isstable(model,V,T,z,phase) the user just wants that phase
+        return V
+    end
+    if threaded
+        Vg0 = x0_volume(model, p, T, z, phase=:v)
+        Vl0 = x0_volume(model, p, T, z, phase=:l)
+        _Vg = Threads.@spawn _volume_compress(model, $p, $T, $z, $Vg0)
+        _Vl = Threads.@spawn _volume_compress(model, $p, $T, $z, $Vl0)
+        Vg::TYPE = fetch(_Vg)
+        Vl::TYPE = fetch(_Vl)
+    else
+        Vg0 = x0_volume(model, p, T, z, phase=:v)
+        Vl0 = x0_volume(model, p, T, z, phase=:l)
+
+        Vg = _volume_compress(model, p, T, z, Vg0)
+        Vl = _volume_compress(model, p, T, z, Vl0)
+    end
+
+    #this catches the supercritical phase as well
+    if isnan(Vl)
+        _v_stable(model, Vg, T, z, phase)
+        return Vg
+    elseif isnan(Vg)
+        _v_stable(model, Vl, T, z, phase)
+        return Vl
+    end
+
+    err() = @error("model $model Failed to converge to a volume root at pressure p = $p [Pa], T = $T [K] and compositions = $z")
+    if (isnan(Vl) & isnan(Vg))
+        err()
+        return zero(TYPE) / zero(TYPE)
+    end
+    _dfg, fg = ∂f(model, Vg, T, z)
+    dVg, _ = _dfg
+    gg = ifelse(abs((p + dVg) / p) > 0.03, zero(dVg) / one(dVg), fg + p * Vg)
+    _dfl, fl = ∂f(model, Vl, T, z)
+    dVl, _ = _dfl
+    gl = ifelse(abs((p + dVl) / p) > 0.03, zero(dVl) / one(dVl), fl + p * Vl)
+    if gg < gl
+        _v_stable(model, Vg, T, z, phase)
+        return Vg
+    else
+        _v_stable(model, Vl, T, z, phase)
+        return Vl
+    end
+end
